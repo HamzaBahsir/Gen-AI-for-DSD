@@ -1,0 +1,139 @@
+module controller (
+    input clk,
+    input rst,
+    output reg write_en,
+    output reg [1:0] sel
+);
+
+    // States for controlling data-path operations
+    typedef enum logic [1:0] {
+        S_IDLE = 2'b00,
+        S_MULTIPLY = 2'b01,
+        S_ADD = 2'b10
+    } state_t;
+
+    state_t state, next_state;
+
+    // State machine to control operations
+    always @(posedge clk or posedge rst) begin
+        if (rst) begin
+            state <= S_IDLE;
+        end else begin
+            state <= next_state;
+        end
+    end
+
+    // Next state logic
+    always @(*) begin
+        case (state)
+            S_IDLE: next_state = S_MULTIPLY;
+            S_MULTIPLY: next_state = S_ADD;
+            S_ADD: next_state = S_IDLE;
+            default: next_state = S_IDLE;
+        endcase
+    end
+
+    // Control signal outputs
+    always @(posedge clk or posedge rst) begin
+        if (rst) begin
+            write_en <= 0;
+            sel <= 2'b00;
+        end else begin
+            case (state)
+                S_IDLE: begin
+                    write_en <= 0;
+                    sel <= 2'b00;
+                end
+                S_MULTIPLY: begin
+                    write_en <= 1;  // Enable write to registers during multiplication
+                    sel <= 2'b00;   // Select appropriate register based on data path
+                end
+                S_ADD: begin
+                    write_en <= 0;  // Disable write during addition
+                    sel <= 2'b01;   // Update selector for addition
+                end
+            endcase
+        end
+    end
+
+endmodule
+
+module data_path (
+    input clk,
+    input rst,
+    input [7:0] A_row0_0, A_row0_1, A_row0_2,
+    input [7:0] A_row1_0, A_row1_1, A_row1_2,
+    input [7:0] A_row2_0, A_row2_1, A_row2_2,
+    input [7:0] x0, x1, x2,
+    input write_en,
+    input [1:0] sel,
+    output reg [15:0] y0, y1, y2
+);
+
+    // Internal signals for storing product values
+    reg [15:0] product0_0, product0_1, product0_2;
+    reg [15:0] product1_0, product1_1, product1_2;
+    reg [15:0] product2_0, product2_1, product2_2;
+
+    // Pipeline registers
+    reg [15:0] pipe0, pipe1, pipe2;
+
+    // Multiplication operations (parallel) for the 3x3 matrix and vector x
+    always @(posedge clk or posedge rst) begin
+        if (rst) begin
+            product0_0 <= 16'd0;
+            product0_1 <= 16'd0;
+            product0_2 <= 16'd0;
+            product1_0 <= 16'd0;
+            product1_1 <= 16'd0;
+            product1_2 <= 16'd0;
+            product2_0 <= 16'd0;
+            product2_1 <= 16'd0;
+            product2_2 <= 16'd0;
+        end else begin
+            // Row 1 Multiplications
+            product0_0 <= A_row0_0 * x0;
+            product0_1 <= A_row0_1 * x1;
+            product0_2 <= A_row0_2 * x2;
+
+            // Row 2 Multiplications
+            product1_0 <= A_row1_0 * x0;
+            product1_1 <= A_row1_1 * x1;
+            product1_2 <= A_row1_2 * x2;
+
+            // Row 3 Multiplications
+            product2_0 <= A_row2_0 * x0;
+            product2_1 <= A_row2_1 * x1;
+            product2_2 <= A_row2_2 * x2;
+        end
+    end
+
+    // Pipeline Register - Store product values and pass them to the adders
+    always @(posedge clk or posedge rst) begin
+        if (rst) begin
+            pipe0 <= 16'd0;
+            pipe1 <= 16'd0;
+            pipe2 <= 16'd0;
+        end else begin
+            // Store intermediate products in pipeline registers
+            pipe0 <= product0_0 + product0_1 + product0_2;
+            pipe1 <= product1_0 + product1_1 + product1_2;
+            pipe2 <= product2_0 + product2_1 + product2_2;
+        end
+    end
+
+    // Output the final results
+    always @(posedge clk or posedge rst) begin
+        if (rst) begin
+            y0 <= 16'd0;
+            y1 <= 16'd0;
+            y2 <= 16'd0;
+        end else begin
+            // Output results from pipeline
+            y0 <= pipe0;
+            y1 <= pipe1;
+            y2 <= pipe2;
+        end
+    end
+
+endmodule
